@@ -689,7 +689,6 @@ if GROUND_TYPES == 'gmpy':
 #   recipes/578078-py26-and-py30-backport-of-python-33s-lru-cache/
 from collections import namedtuple
 from functools import update_wrapper
-from threading import RLock
 
 _CacheInfo = namedtuple("CacheInfo", ["hits", "misses", "maxsize", "currsize"])
 
@@ -755,7 +754,7 @@ def lru_cache(maxsize=100, typed=False):
         make_key = _make_key
         cache_get = cache.get           # bound method to lookup key or return None
         _len = len                      # localize the global len() function
-        lock = RLock()                  # because linkedlist updates aren't threadsafe
+        # lock = None #RLock()                  # because linkedlist updates aren't threadsafe
         root = []                       # root of the circular doubly linked list
         root[:] = [root, root, None, None]      # initialize by pointing to self
         nonlocal_root = [root]                  # make updateable non-locally
@@ -792,62 +791,58 @@ def lru_cache(maxsize=100, typed=False):
                 except TypeError:
                     stats[MISSES] += 1
                     return user_function(*args, **kwds)
-                with lock:
-                    link = cache_get(key)
-                    if link is not None:
-                        # record recent use of the key by moving it to the front of the list
-                        root, = nonlocal_root
-                        link_prev, link_next, key, result = link
-                        link_prev[NEXT] = link_next
-                        link_next[PREV] = link_prev
-                        last = root[PREV]
-                        last[NEXT] = root[PREV] = link
-                        link[PREV] = last
-                        link[NEXT] = root
-                        stats[HITS] += 1
-                        return result
-                result = user_function(*args, **kwds)
-                with lock:
+                link = cache_get(key)
+                if link is not None:
+                    # record recent use of the key by moving it to the front of the list
                     root, = nonlocal_root
-                    if key in cache:
-                        # getting here means that this same key was added to the
-                        # cache while the lock was released.  since the link
-                        # update is already done, we need only return the
-                        # computed result and update the count of misses.
-                        pass
-                    elif _len(cache) >= maxsize:
-                        # use the old root to store the new key and result
-                        oldroot = root
-                        oldroot[KEY] = key
-                        oldroot[RESULT] = result
-                        # empty the oldest link and make it the new root
-                        root = nonlocal_root[0] = oldroot[NEXT]
-                        oldkey = root[KEY]
-                        oldvalue = root[RESULT]
-                        root[KEY] = root[RESULT] = None
-                        # now update the cache dictionary for the new links
-                        del cache[oldkey]
-                        cache[key] = oldroot
-                    else:
-                        # put result in a new link at the front of the list
-                        last = root[PREV]
-                        link = [last, root, key, result]
-                        last[NEXT] = root[PREV] = cache[key] = link
+                    link_prev, link_next, key, result = link
+                    link_prev[NEXT] = link_next
+                    link_next[PREV] = link_prev
+                    last = root[PREV]
+                    last[NEXT] = root[PREV] = link
+                    link[PREV] = last
+                    link[NEXT] = root
+                    stats[HITS] += 1
+                    return result
+                result = user_function(*args, **kwds)
+                root, = nonlocal_root
+                if key in cache:
+                    # getting here means that this same key was added to the
+                    # cache while the lock was released.  since the link
+                    # update is already done, we need only return the
+                    # computed result and update the count of misses.
+                    pass
+                elif _len(cache) >= maxsize:
+                    # use the old root to store the new key and result
+                    oldroot = root
+                    oldroot[KEY] = key
+                    oldroot[RESULT] = result
+                    # empty the oldest link and make it the new root
+                    root = nonlocal_root[0] = oldroot[NEXT]
+                    oldkey = root[KEY]
+                    oldvalue = root[RESULT]
+                    root[KEY] = root[RESULT] = None
+                    # now update the cache dictionary for the new links
+                    del cache[oldkey]
+                    cache[key] = oldroot
+                else:
+                    # put result in a new link at the front of the list
+                    last = root[PREV]
+                    link = [last, root, key, result]
+                    last[NEXT] = root[PREV] = cache[key] = link
                     stats[MISSES] += 1
                 return result
 
         def cache_info():
             """Report cache statistics"""
-            with lock:
-                return _CacheInfo(stats[HITS], stats[MISSES], maxsize, len(cache))
+            return _CacheInfo(stats[HITS], stats[MISSES], maxsize, len(cache))
 
         def cache_clear():
             """Clear the cache and cache statistics"""
-            with lock:
-                cache.clear()
-                root = nonlocal_root[0]
-                root[:] = [root, root, None, None]
-                stats[:] = [0, 0]
+            cache.clear()
+            root = nonlocal_root[0]
+            root[:] = [root, root, None, None]
+            stats[:] = [0, 0]
 
         wrapper.__wrapped__ = user_function
         wrapper.cache_info = cache_info

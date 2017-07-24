@@ -15,6 +15,5 @@ from .source import source
 
 from .decorator import threaded, xthreaded, public, memoize_property
 
-from .runtests import test, doctest
 
 from .timeutils import timed
